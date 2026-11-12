@@ -22,16 +22,31 @@ const PLAN_PRICES = {
 };
 
 // ===== Хранилище (JSON-файл) =====
-let db = { users: {}, sessions: {}, adminSessions: {}, tickets: [], orders: [], keys: [] };
+let db = {
+  users: {},
+  sessions: {},
+  adminSessions: {},
+  tickets: new Array(),
+  orders: new Array(),
+  keys: new Array()
+};
 
 function load() {
   try {
     if (fs.existsSync(DB_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-      db = { users: {}, sessions: {}, adminSessions: {}, tickets: [], orders: [], keys: [], ...parsed };
+      db = Object.assign({
+        users: {},
+        sessions: {},
+        adminSessions: {},
+        tickets: new Array(),
+        orders: new Array(),
+        keys: new Array()
+      }, parsed);
     }
   } catch (e) { console.error('load error', e); }
 }
+
 function save() {
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -49,67 +64,69 @@ function newToken() {
 }
 function auth(req, res, next) {
   const t = (req.headers.authorization || '').replace('Bearer ', '');
-  const nick = db.sessions[t];
+  const nick = db.sessions.hasOwnProperty(t) ? db.sessions[t] : null;
   if (!nick) return res.status(401).json({ error: 'unauthorized' });
   req.nick = nick;
   next();
 }
 function adminAuth(req, res, next) {
   const t = (req.headers.authorization || '').replace('Bearer ', '');
-  if (!db.adminSessions[t]) return res.status(401).json({ error: 'unauthorized' });
+  if (!db.adminSessions.hasOwnProperty(t)) return res.status(401).json({ error: 'unauthorized' });
   next();
 }
 
 // ===== Публичные =====
-app.get('/', (req, res) => res.json({ ok: true, service: 'vortex-api' }));
+app.get('/', function (req, res) {
+  res.json({ ok: true, service: 'vortex-api' });
+});
 
-app.post('/api/register', (req, res) => {
+app.post('/api/register', function (req, res) {
   const nick = String(req.body.nick || '').trim();
   const pass = String(req.body.pass || '');
   if (!nick || !pass) return res.status(400).json({ error: 'nick and pass required' });
-  if (db.users[nick]) return res.status(409).json({ error: 'nick taken' });
+  if (db.users.hasOwnProperty(nick)) return res.status(409).json({ error: 'nick taken' });
   const salt = crypto.randomBytes(16).toString('hex');
-  db.users[nick] = { pass: hash(pass, salt), salt, balance: 0, created: new Date().toISOString() };
+  db.users[nick] = { pass: hash(pass, salt), salt: salt, balance: 0, created: new Date().toISOString() };
   const t = newToken();
   db.sessions[t] = nick;
   save();
-  res.json({ token: t, nick, balance: 0 });
+  res.json({ token: t, nick: nick, balance: 0 });
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', function (req, res) {
   const nick = String(req.body.nick || '').trim();
   const pass = String(req.body.pass || '');
-  const u = db.users[nick];
+  const u = db.users.hasOwnProperty(nick) ? db.users[nick] : null;
   if (!u || u.pass !== hash(pass, u.salt)) return res.status(401).json({ error: 'invalid credentials' });
   const t = newToken();
   db.sessions[t] = nick;
   save();
-  res.json({ token: t, nick, balance: u.balance });
+  res.json({ token: t, nick: nick, balance: u.balance });
 });
 
 // ===== Юзер (нужен токен) =====
-app.get('/api/me', auth, (req, res) => {
+app.get('/api/me', auth, function (req, res) {
   const u = db.users[req.nick];
   res.json({ nick: req.nick, balance: u.balance, created: u.created });
 });
 
-app.post('/api/orders', auth, (req, res) => {
+app.post('/api/orders', auth, function (req, res) {
   const plan = String(req.body.plan || '');
   const price = String(req.body.price || '');
-  const order = { id: newToken().slice(0, 12), nick: req.nick, plan, price, time: new Date().toISOString(), status: 'pending' };
+  const order = { id: newToken().slice(0, 12), nick: req.nick, plan: plan, price: price, time: new Date().toISOString(), status: 'pending' };
   db.orders.unshift(order);
   save();
   res.json(order);
 });
 
-app.get('/api/orders', auth, (req, res) => {
-  res.json(db.orders.filter((o) => o.nick === req.nick));
+app.get('/api/orders', auth, function (req, res) {
+  res.json(db.orders.filter(function (o) { return o.nick === req.nick; }));
 });
 
 // Покупка тарифа с баланса + выдача ключа
-app.post('/api/buy-balance', auth, (req, res) => {
+app.post('/api/buy-balance', auth, function (req, res) {
   const plan = String(req.body.plan || '').trim();
-  const cost = PLAN_PRICES[plan];
+  const cost = PLAN_PRICES.hasOwnProperty(plan) ? PLAN_PRICES[plan] : 0;
   if (!cost) return res.status(400).json({ error: 'unknown plan' });
 
   const u = db.users[req.nick];
@@ -117,7 +134,7 @@ app.post('/api/buy-balance', auth, (req, res) => {
     return res.status(400).json({ error: 'insufficient balance' });
   }
 
-  const freeKey = db.keys.find((k) => k.plan === plan && !k.usedBy);
+  const freeKey = db.keys.find(function (k) { return k.plan === plan && !k.usedBy; });
   if (!freeKey) {
     return res.status(409).json({ error: 'no keys available' });
   }
@@ -129,41 +146,40 @@ app.post('/api/buy-balance', auth, (req, res) => {
   db.orders.unshift({
     id: newToken().slice(0, 12),
     nick: req.nick,
-    plan,
+    plan: plan,
     price: cost + ' ₽ (баланс)',
     time: new Date().toISOString(),
     status: 'paid'
   });
 
   save();
-  res.json({ ok: true, balance: u.balance, key: freeKey.code, plan });
+  res.json({ ok: true, balance: u.balance, key: freeKey.code, plan: plan });
 });
 
-app.get('/api/my-keys', auth, (req, res) => {
-  res.json(db.keys.filter((k) => k.usedBy === req.nick));
+app.get('/api/my-keys', auth, function (req, res) {
+  res.json(db.keys.filter(function (k) { return k.usedBy === req.nick; }));
 });
 
-app.get('/api/tickets', auth, (req, res) => {
-  res.json(db.tickets.filter((t) => t.nick === req.nick));
+app.get('/api/tickets', auth, function (req, res) {
+  res.json(db.tickets.filter(function (t) { return t.nick === req.nick; }));
 });
 
-app.post('/api/tickets', auth, (req, res) => {
+app.post('/api/tickets', auth, function (req, res) {
   const message = String(req.body.message || '').trim();
   if (!message) return res.status(400).json({ error: 'message required' });
-  const t = { id: newToken().slice(0, 12), nick: req.nick, message, time: new Date().toISOString(), status: 'open', reply: '' };
+  const t = { id: newToken().slice(0, 12), nick: req.nick, message: message, time: new Date().toISOString(), status: 'open', reply: '' };
   db.tickets.unshift(t);
   save();
   res.json(t);
 });
 
 // ===== Вебхук оплаты (CryptoCloud / Trybit) =====
-app.post('/api/webhook/cryptocloud', (req, res) => {
+app.post('/api/webhook/cryptocloud', function (req, res) {
   const b = req.body || {};
-  console.log('webhook:', JSON.stringify(b));
   const orderId = b.order_id || b.invoice_id || b.merchant_order_id;
   const status = String(b.status || '').toLowerCase();
   if (status === 'success' || status === 'paid' || status === '1') {
-    const o = db.orders.find((x) => x.id === orderId);
+    const o = db.orders.find(function (x) { return x.id === orderId; });
     if (o && o.status !== 'paid') {
       o.status = 'paid';
       const u = db.users[o.nick];
@@ -175,7 +191,7 @@ app.post('/api/webhook/cryptocloud', (req, res) => {
 });
 
 // ===== Админ =====
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', function (req, res) {
   const login = String(req.body.login || '');
   const pass = String(req.body.pass || '');
   if (login !== ADMIN_LOGIN || pass !== ADMIN_PASS) return res.status(401).json({ error: 'invalid admin credentials' });
@@ -185,48 +201,50 @@ app.post('/api/admin/login', (req, res) => {
   res.json({ token: t });
 });
 
-app.get('/api/admin/users', adminAuth, (req, res) => {
-  res.json(Object.keys(db.users).map((n) => ({ nick: n, balance: db.users[n].balance, created: db.users[n].created })));
+app.get('/api/admin/users', adminAuth, function (req, res) {
+  res.json(Object.keys(db.users).map(function (n) {
+    return { nick: n, balance: db.users[n].balance, created: db.users[n].created };
+  }));
 });
 
-app.post('/api/admin/topup', adminAuth, (req, res) => {
+app.post('/api/admin/topup', adminAuth, function (req, res) {
   const nick = String(req.body.nick || '').trim();
   const amount = parseFloat(req.body.amount);
-  const u = db.users[nick];
+  const u = db.users.hasOwnProperty(nick) ? db.users[nick] : null;
   if (!u) return res.status(404).json({ error: 'user not found' });
   if (!(amount > 0)) return res.status(400).json({ error: 'invalid amount' });
   u.balance = (u.balance || 0) + amount;
   save();
-  res.json({ nick, balance: u.balance });
+  res.json({ nick: nick, balance: u.balance });
 });
 
 // Управление ключами (админ)
-app.get('/api/admin/keys', adminAuth, (req, res) => {
+app.get('/api/admin/keys', adminAuth, function (req, res) {
   res.json(db.keys);
 });
 
-app.post('/api/admin/keys', adminAuth, (req, res) => {
+app.post('/api/admin/keys', adminAuth, function (req, res) {
   const plan = String(req.body.plan || '').trim();
-  const codes = Array.isArray(req.body.codes) ? req.body.codes : [];
-  if (!PLAN_PRICES[plan]) return res.status(400).json({ error: 'invalid plan' });
+  const codes = Array.isArray(req.body.codes) ? req.body.codes : new Array();
+  if (!PLAN_PRICES.hasOwnProperty(plan)) return res.status(400).json({ error: 'invalid plan' });
   let added = 0;
   for (const raw of codes) {
     const code = String(raw || '').trim();
-    if (code && !db.keys.some((k) => k.code === code)) {
-      db.keys.unshift({ id: newToken().slice(0, 10), plan, code, usedBy: null, usedAt: null });
+    if (code && !db.keys.some(function (k) { return k.code === code; })) {
+      db.keys.unshift({ id: newToken().slice(0, 10), plan: plan, code: code, usedBy: null, usedAt: null });
       added++;
     }
   }
   save();
-  res.json({ ok: true, added });
+  res.json({ ok: true, added: added });
 });
 
 // Бэкап и восстановление БД
-app.get('/api/admin/backup', adminAuth, (req, res) => {
+app.get('/api/admin/backup', adminAuth, function (req, res) {
   res.json({ users: db.users, tickets: db.tickets, orders: db.orders, keys: db.keys });
 });
 
-app.post('/api/admin/restore', adminAuth, (req, res) => {
+app.post('/api/admin/restore', adminAuth, function (req, res) {
   const b = req.body || {};
   if (b.users) db.users = b.users;
   if (Array.isArray(b.tickets)) db.tickets = b.tickets;
@@ -236,10 +254,12 @@ app.post('/api/admin/restore', adminAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/admin/tickets', adminAuth, (req, res) => res.json(db.tickets));
+app.get('/api/admin/tickets', adminAuth, function (req, res) {
+  res.json(db.tickets);
+});
 
-app.post('/api/admin/tickets/:id/reply', adminAuth, (req, res) => {
-  const t = db.tickets.find((x) => x.id === req.params.id);
+app.post('/api/admin/tickets/:id/reply', adminAuth, function (req, res) {
+  const t = db.tickets.find(function (x) { return x.id === req.params.id; });
   if (!t) return res.status(404).json({ error: 'not found' });
   t.reply = String(req.body.reply || '');
   t.status = 'answered';
@@ -247,6 +267,10 @@ app.post('/api/admin/tickets/:id/reply', adminAuth, (req, res) => {
   res.json(t);
 });
 
-app.get('/api/admin/orders', adminAuth, (req, res) => res.json(db.orders));
+app.get('/api/admin/orders', adminAuth, function (req, res) {
+  res.json(db.orders);
+});
 
-app.listen(PORT, () => console.log('vortex-api listening on port ' + PORT));
+app.listen(PORT, function () {
+  console.log('vortex-api listening on port ' + PORT);
+});
