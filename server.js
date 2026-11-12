@@ -10,8 +10,8 @@ app.use(express.json({ limit: '5mb' }));
 
 const PORT = process.env.PORT || 10000;
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'r3xd';
-const DOWNLOAD_URL = new Array('https:/', 'github.com', 'snus11713-hash', 'vortex-server', 'releases', 'download', 'v1.0', 'Vortexcc.exe').join('/');
-const DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://' + '://github.com';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'snus2012';
+const DOWNLOAD_URL = new Array('https:/', 'github.com', 'snus11713-hash', 'vortex-server', 'releases', 'latest').join('/');
 
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -114,6 +114,7 @@ app.post('/api/login', function (req, res) {
 // ===== Юзер =====
 app.get('/api/me', auth, function (req, res) {
   const u = db.users[req.nick];
+  if (!u) return res.status(401).json({ error: 'user not found' });
   res.json({ nick: req.nick, balance: u.balance, plan: u.plan || '', hasSub: hasSubscription(req.nick), created: u.created });
 });
 
@@ -130,7 +131,6 @@ app.get('/api/orders', auth, function (req, res) {
   res.json(db.orders.filter(function (o) { return o.nick === req.nick; }));
 });
 
-// Покупка с баланса -> сразу активирует подписку и открывает скачивание
 app.post('/api/buy-balance', auth, function (req, res) {
   const plan = String(req.body.plan || '').trim();
   const cost = PLAN_PRICES.hasOwnProperty(plan) ? PLAN_PRICES[plan] : 0;
@@ -165,7 +165,6 @@ app.post('/api/buy-balance', auth, function (req, res) {
   res.json({ ok: true, balance: u.balance, plan: plan, key: issuedKey, downloadUrl: DOWNLOAD_URL });
 });
 
-// Проверка подписки перед скачиванием
 app.get('/api/download', auth, function (req, res) {
   if (!hasSubscription(req.nick)) {
     return res.status(403).json({ error: 'no active subscription' });
