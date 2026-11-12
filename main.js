@@ -1,4 +1,4 @@
-const API_URL = new Array('https:/', '://onrender.com').join('/');
+onst API_URL = new Array('https:/', '://onrender.com').join('/');
 const ADMIN_NICK = 'r3xd';
 
 async function api(path, options, isAdmin) {
@@ -63,7 +63,6 @@ const registerForm = document.getElementById('registerForm');
 const authMsg = document.getElementById('authMsg');
 function currentUser() { return sessionStorage.getItem('vortex_user'); }
 
-// Скрываем кнопку админки для всех, кроме ADMIN_NICK
 function syncAdminVisibility() {
   const btn = document.getElementById('openAdmin');
   if (!btn) return;
@@ -237,11 +236,15 @@ document.querySelectorAll('.hero-actions a').forEach(function (btn) {
         const res = await api('/api/download');
         if (res.url) {
           window.open(res.url, '_blank');
-          showToast('Открыта страница скачивания Vortexcc.exe');
+          showToast('Открыта страница скачивания файла');
         }
       } catch (err) {
-        showToast('Сначала купи подписку в разделе «Цены»');const pr = document.getElementById('pricing');
+        if (err.message === 'unauthorized') {
+          showToast('Сессия устарела — обнови страницу (F5) и войди снова');} else {
+showToast('Сначала купи подписку в разделе «Цены»');
+const pr = document.getElementById('pricing');
 if (pr) pr.scrollIntoView({ behavior: 'smooth' });
+}
 }
 });
 }
@@ -283,7 +286,7 @@ dl.href = res.downloadUrl;
 dl.target = '_blank';
 dl.className = 'btn btn-primary';
 dl.style.cssText = 'display:inline-block;padding:8px 16px;font-size:13px;';
-dl.textContent = 'Скачать Vortexcc.exe';
+dl.textContent = 'Перейти к скачиванию файла';
 issuedKeyBox.appendChild(dl);
 window.open(res.downloadUrl, '_blank');
 }
@@ -291,6 +294,7 @@ issuedKeyBox.classList.remove('hidden');
 showToast('Куплено! Теперь можешь скачать файл.');
 } catch (err) {
 if (err.message === 'insufficient balance') showToast('Недостаточно средств на балансе');
+else if (err.message === 'unauthorized') showToast('Сессия устарела — обнови страницу (F5) и войди заново');
 else showToast('Ошибка покупки');
 } finally {
 balanceBuyBtn.disabled = false;
@@ -430,7 +434,6 @@ if (sessionStorage.getItem('vortex_admin_token')) { renderAdmin(); adminPanel.cl
 else adminLoginModal.classList.remove('hidden');
 }
 document.getElementById('openAdmin').addEventListener('click', openAdminPanel);
-// Секретная комбинация Ctrl + Shift + A для входа в админку
 document.addEventListener('keydown', function (e) {
 if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a' || e.key === 'Ф' || e.key === 'ф')) {
 e.preventDefault();
