@@ -210,12 +210,35 @@ function showToast(msg) {
   showToast._t = setTimeout(function () { toast.classList.remove('show'); }, 3500);
 }
 
+// ===== Проверка подписки при нажатии «Скачать» =====
+document.querySelectorAll('.hero-actions a').forEach(function (btn) {
+  if (btn.textContent.trim() === 'Скачать') {
+    btn.addEventListener('click', async function (e) {
+      e.preventDefault();
+      if (!sessionStorage.getItem('vortex_token')) {
+        showToast('Сначала войди в аккаунт');
+        return;
+      }
+      try {
+        const res = await api('/api/download');
+        if (res.url) {
+          window.location.href = res.url;
+          showToast('Скачивание Vortexcc.exe началось!');
+        }
+      } catch (err) {
+        showToast('Сначала купи подписку в разделе «Цены»');
+        const pr = document.getElementById('pricing');
+        if (pr) pr.scrollIntoView({ behavior: 'smooth' });
+      }
+    });
+  }
+});
+
+// ===== Оплата с баланса и скачивание =====
 const payModal = document.getElementById('payModal');
 const modalPlan = document.getElementById('modalPlan');
-const modalPrice = document.getElementById('modalPrice');
-const cryptoPayBtn = document.getElementById('cryptoPayBtn');
+const modalPrice = document.getElementById('modalPrice');const cryptoPayBtn = document.getElementById('cryptoPayBtn');
 let selectedPlan = '';
-
 const balanceBuyBtn = document.createElement('button');
 balanceBuyBtn.type = 'button';
 balanceBuyBtn.className = 'btn btn-primary';
@@ -225,7 +248,6 @@ cryptoPayBtn.classList.remove('btn-primary');
 cryptoPayBtn.classList.add('btn-ghost');
 cryptoPayBtn.style.cssText = 'width:100%;display:block;text-align:center;';
 cryptoPayBtn.parentNode.insertBefore(balanceBuyBtn, cryptoPayBtn);
-
 const issuedKeyBox = document.createElement('div');
 issuedKeyBox.className = 'hidden';
 issuedKeyBox.style.cssText = 'margin:12px 0;padding:12px;border-radius:10px;background:rgba(124,58,237,0.18);border:1px solid rgba(192,132,252,0.4);text-align:center;';
@@ -237,12 +259,14 @@ balanceBuyBtn.textContent = 'Покупка...';
 try {
 const res = await api('/api/buy-balance', { method: 'POST', body: JSON.stringify({ plan: selectedPlan }) });
 renderBalance(res.balance);
-issuedKeyBox.textContent = 'Твой ключ (' + res.plan + '): ' + res.key;
+issuedKeyBox.textContent = 'Подписка «' + res.plan + '» активна! ' + (res.key ? 'Ключ: ' + res.key + ' · ' : '') + 'Скачивание запущено.';
 issuedKeyBox.classList.remove('hidden');
-showToast('Успешно куплено! Ключ выдан.');
+showToast('Куплено! Начинаем скачивание Vortexcc.exe...');
+if (res.downloadUrl) {
+window.location.href = res.downloadUrl;
+}
 } catch (err) {
 if (err.message === 'insufficient balance') showToast('Недостаточно средств на балансе');
-else if (err.message === 'no keys available') showToast('Ключи для этого тарифа временно закончились');
 else showToast('Ошибка покупки');
 } finally {
 balanceBuyBtn.disabled = false;
@@ -277,7 +301,7 @@ const list = await api('/api/my-keys');
 if (list.length > 0) {
 alert(list.map(function (k) { return k.plan + ': ' + k.code; }).join('\n'));
 } else {
-alert('У тебя пока нет купленных ключей');
+alert('У тебя пока нет привязанных ключей');
 }
 } catch (e) { showToast('Ошибка загрузки ключей'); }
 });
@@ -299,7 +323,7 @@ o.textContent = p;
 sel.appendChild(o);
 });
 const inp = document.createElement('input');
-inp.placeholder = 'Введи ключ подписки';
+inp.placeholder = 'Ключ (необязательно)';
 inp.style.cssText = 'padding:8px;border-radius:8px;background:#161324;color:#fff;border:1px solid rgba(255,255,255,0.15);';
 const btn = document.createElement('button');
 btn.type = 'button';
@@ -333,7 +357,7 @@ const ub = document.getElementById('adminUsersBody');
 ub.innerHTML = '';
 rows.forEach(function (u) {
 const tr = ub.insertRow();
-tr.insertCell().textContent = u.nick;
+tr.insertCell().textContent = u.nick + (u.plan ? ' [' + u.plan + ']' : '');
 tr.insertCell().textContent = (u.balance || 0) + ' ₽';
 tr.insertCell().textContent = fmtDate(u.created);
 });
