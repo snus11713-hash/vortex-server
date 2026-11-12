@@ -11,6 +11,7 @@ app.use(express.json({ limit: '5mb' }));
 const PORT = process.env.PORT || 10000;
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'r3xd';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'snus2012';
+const DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://' + '://github.com';
 
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -21,7 +22,6 @@ const PLAN_PRICES = {
   'Премиум': 899
 };
 
-// ===== Хранилище (JSON-файл) =====
 let db = {
   users: {},
   sessions: {},
@@ -55,7 +55,6 @@ function save() {
 }
 load();
 
-// ===== Утилиты =====
 function hash(pass, salt) {
   return crypto.scryptSync(pass, salt, 64).toString('hex');
 }
@@ -75,6 +74,14 @@ function adminAuth(req, res, next) {
   next();
 }
 
+function hasSubscription(nick) {
+  const u = db.users.hasOwnProperty(nick) ? db.users[nick] : null;
+  if (u && u.plan) return true;
+  return db.orders.some(function (o) {
+    return o.nick === nick && o.status === 'paid';
+  });
+}
+
 // ===== Публичные =====
 app.get('/', function (req, res) {
   res.json({ ok: true, service: 'vortex-api' });
@@ -86,11 +93,11 @@ app.post('/api/register', function (req, res) {
   if (!nick || !pass) return res.status(400).json({ error: 'nick and pass required' });
   if (db.users.hasOwnProperty(nick)) return res.status(409).json({ error: 'nick taken' });
   const salt = crypto.randomBytes(16).toString('hex');
-  db.users[nick] = { pass: hash(pass, salt), salt: salt, balance: 0, created: new Date().toISOString() };
+  db.users[nick] = { pass: hash(pass, salt), salt: salt, balance: 0, plan: '', created: new Date().toISOString() };
   const t = newToken();
   db.sessions[t] = nick;
   save();
-  res.json({ token: t, nick: nick, balance: 0 });
+  res.json({ token: t, nick: nick, balance: 0, hasSub: false });
 });
 
 app.post('/api/login', function (req, res) {
@@ -101,13 +108,13 @@ app.post('/api/login', function (req, res) {
   const t = newToken();
   db.sessions[t] = nick;
   save();
-  res.json({ token: t, nick: nick, balance: u.balance });
+  res.json({ token: t, nick: nick, balance: u.balance, hasSub: hasSubscription(nick) });
 });
 
-// ===== Юзер (нужен токен) =====
+// ===== Юзер =====
 app.get('/api/me', auth, function (req, res) {
   const u = db.users[req.nick];
-  res.json({ nick: req.nick, balance: u.balance, created: u.created });
+  res.json({ nick: req.nick, balance: u.balance, plan: u.plan || '', hasSub: hasSubscription(req.nick), created: u.created });
 });
 
 app.post('/api/orders', auth, function (req, res) {
@@ -123,7 +130,7 @@ app.get('/api/orders', auth, function (req, res) {
   res.json(db.orders.filter(function (o) { return o.nick === req.nick; }));
 });
 
-// Покупка тарифа с баланса + выдача ключа
+// Покупка с баланса -> сразу активирует подписку и открывает скачивание
 app.post('/api/buy-balance', auth, function (req, res) {
   const plan = String(req.body.plan || '').trim();
   const cost = PLAN_PRICES.hasOwnProperty(plan) ? PLAN_PRICES[plan] : 0;
@@ -134,14 +141,16 @@ app.post('/api/buy-balance', auth, function (req, res) {
     return res.status(400).json({ error: 'insufficient balance' });
   }
 
-  const freeKey = db.keys.find(function (k) { return k.plan === plan && !k.usedBy; });
-  if (!freeKey) {
-    return res.status(409).json({ error: 'no keys available' });
-  }
-
   u.balance -= cost;
-  freeKey.usedBy = req.nick;
-  freeKey.usedAt = new Date().toISOString();
+  u.plan = plan;
+
+  const freeKey = db.keys.find(function (k) { return k.plan === plan && !k.usedBy; });
+  let issuedKey = '';
+  if (freeKey) {
+    freeKey.usedBy = req.nick;
+    freeKey.usedAt = new Date().toISOString();
+    issuedKey = freeKey.code;
+  }
 
   db.orders.unshift({
     id: newToken().slice(0, 12),
@@ -153,7 +162,15 @@ app.post('/api/buy-balance', auth, function (req, res) {
   });
 
   save();
-  res.json({ ok: true, balance: u.balance, key: freeKey.code, plan: plan });
+  res.json({ ok: true, balance: u.balance, plan: plan, key: issuedKey, downloadUrl: DOWNLOAD_URL });
+});
+
+// Проверка подписки перед скачиванием
+app.get('/api/download', auth, function (req, res) {
+  if (!hasSubscription(req.nick)) {
+    return res.status(403).json({ error: 'no active subscription' });
+  }
+  res.json({ url: DOWNLOAD_URL });
 });
 
 app.get('/api/my-keys', auth, function (req, res) {
@@ -173,7 +190,7 @@ app.post('/api/tickets', auth, function (req, res) {
   res.json(t);
 });
 
-// ===== Вебхук оплаты (CryptoCloud / Trybit) =====
+// ===== Вебхук оплаты =====
 app.post('/api/webhook/cryptocloud', function (req, res) {
   const b = req.body || {};
   const orderId = b.order_id || b.invoice_id || b.merchant_order_id;
@@ -203,7 +220,7 @@ app.post('/api/admin/login', function (req, res) {
 
 app.get('/api/admin/users', adminAuth, function (req, res) {
   res.json(Object.keys(db.users).map(function (n) {
-    return { nick: n, balance: db.users[n].balance, created: db.users[n].created };
+    return { nick: n, balance: db.users[n].balance, plan: db.users[n].plan || '', created: db.users[n].created };
   }));
 });
 
@@ -218,7 +235,6 @@ app.post('/api/admin/topup', adminAuth, function (req, res) {
   res.json({ nick: nick, balance: u.balance });
 });
 
-// Управление ключами (админ)
 app.get('/api/admin/keys', adminAuth, function (req, res) {
   res.json(db.keys);
 });
@@ -239,7 +255,6 @@ app.post('/api/admin/keys', adminAuth, function (req, res) {
   res.json({ ok: true, added: added });
 });
 
-// Бэкап и восстановление БД
 app.get('/api/admin/backup', adminAuth, function (req, res) {
   res.json({ users: db.users, tickets: db.tickets, orders: db.orders, keys: db.keys });
 });
