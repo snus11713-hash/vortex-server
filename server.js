@@ -6,7 +6,7 @@ const path = require('path');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 const PORT = process.env.PORT || 10000;
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'r3xd';
@@ -15,14 +15,21 @@ const ADMIN_PASS = process.env.ADMIN_PASS || 'snus2012';
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
+const PLAN_PRICES = {
+  'Базовый': 299,
+  'Стандарт': 549,
+  'Премиум': 899
+};
+
 // ===== Хранилище (JSON-файл) =====
-// ВНИМАНИЕ: на бесплатном Render файловая система сбрасывается при передеплое.
-// Для продакшена нужна БД (Postgres/Supabase) — подключим отдельно.
-let db = { users: {}, sessions: {}, adminSessions: {}, tickets: [], orders: [] };
+let db = { users: {}, sessions: {}, adminSessions: {}, tickets: [], orders: [], keys: [] };
 
 function load() {
   try {
-    if (fs.existsSync(DB_FILE)) db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    if (fs.existsSync(DB_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+      db = { users: {}, sessions: {}, adminSessions: {}, tickets: [], orders: [], keys: [], ...parsed };
+    }
   } catch (e) { console.error('load error', e); }
 }
 function save() {
@@ -99,6 +106,43 @@ app.get('/api/orders', auth, (req, res) => {
   res.json(db.orders.filter((o) => o.nick === req.nick));
 });
 
+// Покупка тарифа с баланса + выдача ключа
+app.post('/api/buy-balance', auth, (req, res) => {
+  const plan = String(req.body.plan || '').trim();
+  const cost = PLAN_PRICES[plan];
+  if (!cost) return res.status(400).json({ error: 'unknown plan' });
+
+  const u = db.users[req.nick];
+  if (!u || (u.balance || 0) < cost) {
+    return res.status(400).json({ error: 'insufficient balance' });
+  }
+
+  const freeKey = db.keys.find((k) => k.plan === plan && !k.usedBy);
+  if (!freeKey) {
+    return res.status(409).json({ error: 'no keys available' });
+  }
+
+  u.balance -= cost;
+  freeKey.usedBy = req.nick;
+  freeKey.usedAt = new Date().toISOString();
+
+  db.orders.unshift({
+    id: newToken().slice(0, 12),
+    nick: req.nick,
+    plan,
+    price: cost + ' ₽ (баланс)',
+    time: new Date().toISOString(),
+    status: 'paid'
+  });
+
+  save();
+  res.json({ ok: true, balance: u.balance, key: freeKey.code, plan });
+});
+
+app.get('/api/my-keys', auth, (req, res) => {
+  res.json(db.keys.filter((k) => k.usedBy === req.nick));
+});
+
 app.get('/api/tickets', auth, (req, res) => {
   res.json(db.tickets.filter((t) => t.nick === req.nick));
 });
@@ -154,6 +198,42 @@ app.post('/api/admin/topup', adminAuth, (req, res) => {
   u.balance = (u.balance || 0) + amount;
   save();
   res.json({ nick, balance: u.balance });
+});
+
+// Управление ключами (админ)
+app.get('/api/admin/keys', adminAuth, (req, res) => {
+  res.json(db.keys);
+});
+
+app.post('/api/admin/keys', adminAuth, (req, res) => {
+  const plan = String(req.body.plan || '').trim();
+  const codes = Array.isArray(req.body.codes) ? req.body.codes : [];
+  if (!PLAN_PRICES[plan]) return res.status(400).json({ error: 'invalid plan' });
+  let added = 0;
+  for (const raw of codes) {
+    const code = String(raw || '').trim();
+    if (code && !db.keys.some((k) => k.code === code)) {
+      db.keys.unshift({ id: newToken().slice(0, 10), plan, code, usedBy: null, usedAt: null });
+      added++;
+    }
+  }
+  save();
+  res.json({ ok: true, added });
+});
+
+// Бэкап и восстановление БД
+app.get('/api/admin/backup', adminAuth, (req, res) => {
+  res.json({ users: db.users, tickets: db.tickets, orders: db.orders, keys: db.keys });
+});
+
+app.post('/api/admin/restore', adminAuth, (req, res) => {
+  const b = req.body || {};
+  if (b.users) db.users = b.users;
+  if (Array.isArray(b.tickets)) db.tickets = b.tickets;
+  if (Array.isArray(b.orders)) db.orders = b.orders;
+  if (Array.isArray(b.keys)) db.keys = b.keys;
+  save();
+  res.json({ ok: true });
 });
 
 app.get('/api/admin/tickets', adminAuth, (req, res) => res.json(db.tickets));
